@@ -216,6 +216,3 @@ def user_posts(username):
     return render_template('user_posts.html', posts=posts, user=user)
 
 
-if __name__ == '__main__':
-    app.run(debug=True)
-
