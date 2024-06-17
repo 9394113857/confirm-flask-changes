@@ -1,6 +1,9 @@
 from datetime import datetime
+from flask import current_app
 from flaskblog import db, login_manager
 from flask_login import UserMixin
+from itsdangerous import URLSafeTimedSerializer as Serializer
+
 
 
 @login_manager.user_loader
@@ -14,7 +17,35 @@ class User(db.Model, UserMixin):
     email = db.Column(db.String(120), unique=True, nullable=False)
     image_file = db.Column(db.String(20), nullable=False, default='default.jpg')
     password = db.Column(db.String(60), nullable=False)
+    verified = db.Column(db.Boolean, default=False)
     posts = db.relationship('Post', backref='author', lazy=True)
+
+    def get_verification_token(self, expires_sec=1800):
+        s = Serializer(current_app.config['SECRET_KEY'])
+        return s.dumps({'user_id': self.id}, salt=current_app.config['SECURITY_PASSWORD_SALT'])
+    
+    @staticmethod
+    def verify_verification_token(token, expires_sec=1800):
+        s = Serializer(current_app.config['SECRET_KEY'])
+        try:
+            user_id = s.loads(token, salt=current_app.config['SECURITY_PASSWORD_SALT'], max_age=expires_sec)['user_id']
+        except:
+            return None
+        return User.query.get(user_id)
+
+    def get_reset_token(self, expires_sec=1800):
+        s = Serializer(current_app.config['SECRET_KEY'])
+        return s.dumps({'user_id': self.id}, salt=current_app.config['SECURITY_PASSWORD_SALT'])
+
+    @staticmethod
+    def verify_reset_token(token, expires_sec=1800):
+        s = Serializer(current_app.config['SECRET_KEY'])
+        try:
+            user_id = s.loads(token, salt=current_app.config['SECURITY_PASSWORD_SALT'], max_age=expires_sec)['user_id']
+        except:
+            return None
+        return User.query.get(user_id)
+
 
     def __repr__(self):
         return f"User('{self.username}', '{self.email}', '{self.image_file}')"
