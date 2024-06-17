@@ -1,5 +1,8 @@
 import os
 import secrets
+import logging
+from logging.handlers import RotatingFileHandler
+from datetime import date
 from PIL import Image
 from flask import render_template, url_for, flash, redirect, request, abort
 from flaskblog import app, db, bcrypt
@@ -7,13 +10,42 @@ from flaskblog.forms import RegistrationForm, LoginForm, UpdateAccountForm, Post
 from flaskblog.models import User, Post
 from flask_login import login_user, current_user, logout_user, login_required
 
+# Set up logger configuration
+logs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+
+# Get the current year and month
+current_year = date.today().strftime('%Y')
+current_month = date.today().strftime('%m')
+
+# Create directories for the current year and month
+year_month_dir = os.path.join(logs_dir, current_year, current_month)
+os.makedirs(year_month_dir, exist_ok=True)
+
+# Define the log file name using today's date
+log_file = os.path.join(year_month_dir, f'{date.today()}.log')
+
+# Create a RotatingFileHandler with log file rotation settings
+log_handler = RotatingFileHandler(log_file, maxBytes=1024 * 1024, backupCount=5)
+log_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s [%(module)s:%(lineno)d] %(message)s'))
+
+# Create a logger and set its level to INFO
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Add the RotatingFileHandler to the logger
+logger.addHandler(log_handler)
+
 
 @app.route("/")
 @app.route("/home")
 def home():
-    page = request.args.get('page', 1, type=int)
-    posts = Post.query.order_by(Post.date_posted.desc()).paginate(page=page, per_page=5)
-    return render_template('home.html', posts=posts)
+    try:
+        page = request.args.get('page', 1, type=int)
+        posts = Post.query.order_by(Post.date_posted.desc()).paginate(page=page, per_page=5)
+        return render_template('home.html', posts=posts)
+    except Exception as e:
+        logger.error(f"Error in home route: {str(e)}")
+        abort(500)
 
 
 @app.route("/about")
@@ -27,12 +59,17 @@ def register():
         return redirect(url_for('home'))
     form = RegistrationForm()
     if form.validate_on_submit():
-        hashed_password = bcrypt.generate_password_hash(form.password.data).decode('utf-8')
-        user = User(username=form.username.data, email=form.email.data, password=hashed_password)
-        db.session.add(user)
-        db.session.commit()
-        flash('Your account has been created! You are now able to log in', 'success')
-        return redirect(url_for('login'))
+        try:
+            hashed_password = bcrypt.generate_password_hash(form.password.data).decode('utf-8')
+            user = User(username=form.username.data, email=form.email.data, password=hashed_password)
+            db.session.add(user)
+            db.session.commit()
+            flash('Your account has been created! You are now able to log in', 'success')
+            return redirect(url_for('login'))
+        except Exception as e:
+            logger.error(f"Error in register route: {str(e)}")
+            flash('An error occurred. Please try again later.', 'danger')
+            db.session.rollback()
     return render_template('register.html', title='Register', form=form)
 
 
@@ -42,13 +79,17 @@ def login():
         return redirect(url_for('home'))
     form = LoginForm()
     if form.validate_on_submit():
-        user = User.query.filter_by(email=form.email.data).first()
-        if user and bcrypt.check_password_hash(user.password, form.password.data):
-            login_user(user, remember=form.remember.data)
-            next_page = request.args.get('next')
-            return redirect(next_page) if next_page else redirect(url_for('home'))
-        else:
-            flash('Login Unsuccessful. Please check email and password', 'danger')
+        try:
+            user = User.query.filter_by(email=form.email.data).first()
+            if user and bcrypt.check_password_hash(user.password, form.password.data):
+                login_user(user, remember=form.remember.data)
+                next_page = request.args.get('next')
+                return redirect(next_page) if next_page else redirect(url_for('home'))
+            else:
+                flash('Login Unsuccessful. Please check email and password', 'danger')
+        except Exception as e:
+            logger.error(f"Error in login route: {str(e)}")
+            flash('An error occurred. Please try again later.', 'danger')
     return render_template('login.html', title='Login', form=form)
 
 
@@ -77,14 +118,19 @@ def save_picture(form_picture):
 def account():
     form = UpdateAccountForm()
     if form.validate_on_submit():
-        if form.picture.data:
-            picture_file = save_picture(form.picture.data)
-            current_user.image_file = picture_file
-        current_user.username = form.username.data
-        current_user.email = form.email.data
-        db.session.commit()
-        flash('Your account has been updated!', 'success')
-        return redirect(url_for('account'))
+        try:
+            if form.picture.data:
+                picture_file = save_picture(form.picture.data)
+                current_user.image_file = picture_file
+            current_user.username = form.username.data
+            current_user.email = form.email.data
+            db.session.commit()
+            flash('Your account has been updated!', 'success')
+            return redirect(url_for('account'))
+        except Exception as e:
+            logger.error(f"Error in account route: {str(e)}")
+            flash('An error occurred. Please try again later.', 'danger')
+            db.session.rollback()
     elif request.method == 'GET':
         form.username.data = current_user.username
         form.email.data = current_user.email
@@ -98,11 +144,16 @@ def account():
 def new_post():
     form = PostForm()
     if form.validate_on_submit():
-        post = Post(title=form.title.data, content=form.content.data, author=current_user)
-        db.session.add(post)
-        db.session.commit()
-        flash('Your post has been created!', 'success')
-        return redirect(url_for('home'))
+        try:
+            post = Post(title=form.title.data, content=form.content.data, author=current_user)
+            db.session.add(post)
+            db.session.commit()
+            flash('Your post has been created!', 'success')
+            return redirect(url_for('home'))
+        except Exception as e:
+            logger.error(f"Error in new_post route: {str(e)}")
+            flash('An error occurred. Please try again later.', 'danger')
+            db.session.rollback()
     return render_template('create_post.html', title='New Post',
                            form=form, legend='New Post')
 
@@ -121,11 +172,16 @@ def update_post(post_id):
         abort(403)
     form = PostForm()
     if form.validate_on_submit():
-        post.title = form.title.data
-        post.content = form.content.data
-        db.session.commit()
-        flash('Your post has been updated!', 'success')
-        return redirect(url_for('post', post_id=post.id))
+        try:
+            post.title = form.title.data
+            post.content = form.content.data
+            db.session.commit()
+            flash('Your post has been updated!', 'success')
+            return redirect(url_for('post', post_id=post.id))
+        except Exception as e:
+            logger.error(f"Error in update_post route: {str(e)}")
+            flash('An error occurred. Please try again later.', 'danger')
+            db.session.rollback()
     elif request.method == 'GET':
         form.title.data = post.title
         form.content.data = post.content
@@ -139,9 +195,14 @@ def delete_post(post_id):
     post = Post.query.get_or_404(post_id)
     if post.author != current_user:
         abort(403)
-    db.session.delete(post)
-    db.session.commit()
-    flash('Your post has been deleted!', 'success')
+    try:
+        db.session.delete(post)
+        db.session.commit()
+        flash('Your post has been deleted!', 'success')
+    except Exception as e:
+        logger.error(f"Error in delete_post route: {str(e)}")
+        flash('An error occurred. Please try again later.', 'danger')
+        db.session.rollback()
     return redirect(url_for('home'))
 
 
@@ -153,3 +214,8 @@ def user_posts(username):
         .order_by(Post.date_posted.desc())\
         .paginate(page=page, per_page=5)
     return render_template('user_posts.html', posts=posts, user=user)
+
+
+if __name__ == '__main__':
+    app.run(debug=True)
+
